@@ -78,21 +78,21 @@ class TD3Agent:
         self.memory.store_transition(state, action, reward, new_state, done)
 
     def choose_action(self, observation, evaluate=False):
-        
-        if not evaluate:
-            if self.time_step < self.warmup:
-                mu = np.random.normal(scale=self.noise, size=(self.n_actions,))
-                mu_prime = mu
-            else:
-                state = tf.convert_to_tensor([observation], dtype=tf.float32)
-                mu = self.actor(state)[0] 
-                mu_prime = mu + np.random.normal(scale=self.noise)
-        else:
+        # Force CPU execution for small-batch inference to improve stability/speed
+        with tf.device("/cpu:0"):
             state = tf.convert_to_tensor([observation], dtype=tf.float32)
-            mu = self.actor(state)[0] 
-            mu_prime = mu
-    
-        mu_prime = tf.clip_by_value(mu_prime, self.min_action, self.max_action)
+            if not evaluate:
+                if self.time_step < self.warmup:
+                    mu = np.random.normal(scale=self.noise, size=(self.n_actions,))
+                    mu_prime = mu
+                else:
+                    mu = self.actor(state)[0] 
+                    mu_prime = mu + np.random.normal(scale=self.noise)
+            else:
+                mu = self.actor(state)[0] 
+                mu_prime = mu
+        
+            mu_prime = tf.clip_by_value(mu_prime, self.min_action, self.max_action)
 
         self.time_step += 1
 
@@ -218,6 +218,15 @@ class TD3Agent:
         self.critic_2.save_weights(self.critic_2.checkpoints_file)
         self.target_critic_2.save_weights(self.target_critic_2.checkpoints_file)
 
+    def save_best_models(self):
+        print('... saving BEST models ...')
+        self.actor.save_weights(self.actor.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+        self.target_actor.save_weights(self.target_actor.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+        self.critic_1.save_weights(self.critic_1.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+        self.target_critic_1.save_weights(self.target_critic_1.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+        self.critic_2.save_weights(self.critic_2.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+        self.target_critic_2.save_weights(self.target_critic_2.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+
     def load_models(self):
         print('... loading models ...')
         try:
@@ -230,3 +239,38 @@ class TD3Agent:
             print("... models loaded successfully ...")
         except Exception as e:
             print(f"... no checkpoints found, starting from scratch ... Error: {e}")
+
+    def load_best_models(self):
+        print('... loading BEST models ...')
+        try:
+            self.actor.load_weights(self.actor.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+            self.target_actor.load_weights(self.target_actor.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+            self.critic_1.load_weights(self.critic_1.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+            self.target_critic_1.load_weights(self.target_critic_1.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+            self.critic_2.load_weights(self.critic_2.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+            self.target_critic_2.load_weights(self.target_critic_2.checkpoints_file.replace('.weights.h5', '_best.weights.h5'))
+            print("... BEST models loaded successfully ...")
+        except Exception as e:
+            print(f"... no BEST checkpoints found ... Error: {e}")
+
+    def save_sniper_models(self):
+        print('... saving SNIPER models (Peak Performance) ...')
+        self.actor.save_weights(self.actor.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+        self.target_actor.save_weights(self.target_actor.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+        self.critic_1.save_weights(self.critic_1.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+        self.target_critic_1.save_weights(self.target_critic_1.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+        self.critic_2.save_weights(self.critic_2.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+        self.target_critic_2.save_weights(self.target_critic_2.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+
+    def load_sniper_models(self):
+        print('... loading SNIPER models ...')
+        try:
+            self.actor.load_weights(self.actor.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+            self.target_actor.load_weights(self.target_actor.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+            self.critic_1.load_weights(self.critic_1.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+            self.target_critic_1.load_weights(self.target_critic_1.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+            self.critic_2.load_weights(self.critic_2.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+            self.target_critic_2.load_weights(self.target_critic_2.checkpoints_file.replace('.weights.h5', '_sniper.weights.h5'))
+            print("... SNIPER models loaded successfully ...")
+        except Exception as e:
+            print(f"... no SNIPER checkpoints found ... Error: {e}")
