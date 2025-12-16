@@ -9,11 +9,10 @@ import time
 import os
 
 # ==========================================
-# 🧠 PART 1: THE BRAIN (TD3 AGENT & BUFFER)
+#  PART 1: THE BRAIN (TD3 AGENT & BUFFER)
 # ==========================================
 
 class ReplayBuffer:
-    # (ReplayBuffer class code unchanged)
     def __init__(self, max_size, input_shape, n_actions):
         self.mem_size = max_size
         self.mem_cntr = 0
@@ -40,7 +39,6 @@ class ReplayBuffer:
                 self.terminal_memory[batch])
 
 class TD3Agent:
-    # (TD3Agent class code unchanged)
     def __init__(self, input_dims, n_actions, env):
         self.env = env
         self.n_actions = n_actions
@@ -112,7 +110,7 @@ class TD3Agent:
             q1_ = tf.squeeze(q1_, 1)
             q2_ = tf.squeeze(q2_, 1)
             
-            target = rewards + 0.99 * tf.minimum(q1_, q2_) * (1 - dones.astype(float))
+            target = rewards + 0.99 * tf.minimum(q1_, q2_) * (1 - tf.cast(dones, tf.float32))
             
             q1 = tf.squeeze(self.critic_1([states, actions]), 1)
             q2 = tf.squeeze(self.critic_2([states, actions]), 1)
@@ -141,13 +139,13 @@ class TD3Agent:
             a.assign(b * tau + a * (1 - tau))
 
 # ==========================================
-# 🚀 PART 2: THE EXECUTION
+#  PART 2: THE EXECUTION
 # ==========================================
 
 def run_project_zero():
     # --- PHASE 1: TRAINING (Forced 50 Episodes) ---
     print("\n" + "="*40)
-    print("🚀 TRAINING STARTED (FORCED 50 EPISODES)")
+    print(" TRAINING STARTED (FORCED 50 EPISODES)")
     print("This will guarantee a diverse trained brain.")
     print("="*40)
     
@@ -187,7 +185,7 @@ def run_project_zero():
         # ONLY START DEMO AFTER MINIMUM PRACTICE IS COMPLETE
         # AND the score is decent (Score > -5.0)
         if i >= MIN_TRAINING_EPISODES - 1 and score > -5.0: 
-            print(f"\n✅ BRAIN TRAINED! (Score {score:.2f})")
+            print(f"\n BRAIN TRAINED! (Score {score:.2f})")
             print("Swapping to DEMO MODE now...")
             break
         elif i >= 199:
@@ -197,35 +195,39 @@ def run_project_zero():
 
     # --- PHASE 2: LIVE DEMO (GUI) ---
     print("\n" + "="*40)
-    print("🎥 LIVE DEMO STARTING")
+    print(" LIVE DEMO STARTING")
     print("="*40)
     
-    env_demo = gym.make('PandaReach-v3', render_mode="rgb_array", reward_type="dense")
+    env_demo = gym.make('PandaReach-v3', render_mode="human", reward_type="dense")
     
-    while True:
-        obs, _ = env_demo.reset()
-        done = False
-        
-        print("\nTarget Appeared. Moving...")
-        
-        for step in range(80):
-            state = np.concatenate([obs['observation'], obs['achieved_goal'], obs['desired_goal']])
+    try:
+        while True:
+            obs, _ = env_demo.reset()
+            done = False
             
-            action = agent.choose_action(state, evaluate=True)
-            obs, _, done, truncated, _ = env_demo.step(action)
+            print("\nTarget Appeared. Moving...")
             
-            if done or truncated: break
-            
-            time.sleep(0.01) # Small sleep for natural visual speed
-            
-        # Check Success
-        dist = np.linalg.norm(obs['achieved_goal'] - obs['desired_goal']) * 100
-        if dist < 5.0:
-            print(f"✅ HIT! Distance: {dist:.1f} cm")
-        else:
-            print(f"❌ Miss. Distance: {dist:.1f} cm")
-            
-        time.sleep(1.0) # Pause between targets
+            for step in range(80):
+                state = np.concatenate([obs['observation'], obs['achieved_goal'], obs['desired_goal']])
+                
+                action = agent.choose_action(state, evaluate=True)
+                obs, _, done, truncated, _ = env_demo.step(action)
+                
+                if done or truncated: break
+                
+                time.sleep(0.01) # Small sleep for natural visual speed
+                
+            # Check Success
+            dist = np.linalg.norm(obs['achieved_goal'] - obs['desired_goal']) * 100
+            if dist < 5.0:
+                print(f" HIT! Distance: {dist:.1f} cm")
+            else:
+                print(f" Miss. Distance: {dist:.1f} cm")
+                
+            time.sleep(1.0) # Pause between targets
+    except KeyboardInterrupt:
+        print("\nDemo stopped by user.")
+        env_demo.close()
 
 if __name__ == '__main__':
     run_project_zero()
