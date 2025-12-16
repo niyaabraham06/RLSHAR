@@ -6,7 +6,6 @@ import tensorflow.keras as keras
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.optimizers import Adam
 import time
-import os
 
 # ==========================================
 #  PART 1: THE BRAIN (TD3 AGENT & BUFFER)
@@ -45,6 +44,8 @@ class TD3Agent:
         self.batch_size = 256
         self.max_action = env.action_space.high[0]
         self.min_action = env.action_space.low[0]
+        self.learn_step_cntr = 0 
+        self.update_period = 2    
         
         # Build Networks
         self.actor = self.build_actor(input_dims, n_actions)
@@ -54,11 +55,12 @@ class TD3Agent:
         self.critic_2 = self.build_critic(input_dims, n_actions)
         self.target_critic_2 = self.build_critic(input_dims, n_actions)
 
-        self.actor.compile(optimizer=Adam(learning_rate=0.001))
-        self.critic_1.compile(optimizer=Adam(learning_rate=0.001))
-        self.critic_2.compile(optimizer=Adam(learning_rate=0.001))
+        # Learning rate tuned for stability
+        lr = 0.0003 
+        self.actor.compile(optimizer=Adam(learning_rate=lr))
+        self.critic_1.compile(optimizer=Adam(learning_rate=lr))
+        self.critic_2.compile(optimizer=Adam(learning_rate=lr))
         
-        # Initialize Targets
         self.target_actor.set_weights(self.actor.get_weights())
         self.target_critic_1.set_weights(self.critic_1.get_weights())
         self.target_critic_2.set_weights(self.critic_2.get_weights())
@@ -70,7 +72,7 @@ class TD3Agent:
         x = Dense(256, activation='relu')(inputs)
         x = Dense(256, activation='relu')(x)
         x = Dense(n_actions, activation='tanh')(x)
-        outputs = x * self.env.action_space.high[0]
+        outputs = x * self.max_action
         return keras.Model(inputs, outputs)
 
     def build_critic(self, input_dims, n_actions):
@@ -86,10 +88,11 @@ class TD3Agent:
         state = tf.convert_to_tensor([observation], dtype=tf.float32)
         actions = self.actor(state)
         if not evaluate:
+            # Add exploration noise
             actions += tf.random.normal(shape=[self.n_actions], mean=0.0, stddev=0.1)
         return np.clip(actions.numpy()[0], self.min_action, self.max_action)
 
-    @tf.function
+    # REMOVED @tf.function to prevent the Adam Optimizer variable creation error
     def learn(self):
         if self.memory.mem_cntr < self.batch_size: return
 
@@ -100,20 +103,21 @@ class TD3Agent:
         rewards = tf.convert_to_tensor(rewards, dtype=tf.float32)
         new_states = tf.convert_to_tensor(new_states, dtype=tf.float32)
 
+        # --- CRITIC UPDATE ---
         with tf.GradientTape(persistent=True) as tape:
             target_actions = self.target_actor(new_states)
-            target_actions += tf.clip_by_value(tf.random.normal(shape=[self.batch_size, self.n_actions], stddev=0.2), -0.5, 0.5)
-            target_actions = tf.clip_by_value(target_actions, self.min_action, self.max_action)
+            # Target policy smoothing
+            noise = tf.clip_by_value(tf.random.normal(shape=[self.batch_size, self.n_actions], stddev=0.2), -0.5, 0.5)
+            target_actions = tf.clip_by_value(target_actions + noise, self.min_action, self.max_action)
 
             q1_ = self.target_critic_1([new_states, target_actions])
             q2_ = self.target_critic_2([new_states, target_actions])
-            q1_ = tf.squeeze(q1_, 1)
-            q2_ = tf.squeeze(q2_, 1)
             
-            target = rewards + 0.99 * tf.minimum(q1_, q2_) * (1 - tf.cast(dones, tf.float32))
+            # Squeeze and calculate target Q-value (Bellman equation)
+            target = rewards + 0.99 * tf.minimum(tf.squeeze(q1_), tf.squeeze(q2_)) * (1 - tf.cast(dones, tf.float32))
             
-            q1 = tf.squeeze(self.critic_1([states, actions]), 1)
-            q2 = tf.squeeze(self.critic_2([states, actions]), 1)
+            q1 = tf.squeeze(self.critic_1([states, actions]))
+            q2 = tf.squeeze(self.critic_2([states, actions]))
             
             critic_loss_1 = keras.losses.MSE(target, q1)
             critic_loss_2 = keras.losses.MSE(target, q2)
@@ -123,16 +127,21 @@ class TD3Agent:
         grads_2 = tape.gradient(critic_loss_2, self.critic_2.trainable_variables)
         self.critic_2.optimizer.apply_gradients(zip(grads_2, self.critic_2.trainable_variables))
 
-        with tf.GradientTape() as tape:
-            new_actions = self.actor(states)
-            actor_loss = -tf.math.reduce_mean(self.critic_1([states, new_actions]))
+        self.learn_step_cntr += 1
 
-        actor_grads = tape.gradient(actor_loss, self.actor.trainable_variables)
-        self.actor.optimizer.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
+        # --- DELAYED ACTOR UPDATE ---
+        if self.learn_step_cntr % self.update_period == 0:
+            with tf.GradientTape() as tape:
+                new_actions = self.actor(states)
+                actor_loss = -tf.math.reduce_mean(self.critic_1([states, new_actions]))
 
-        self.update_targets(self.target_actor.variables, self.actor.variables)
-        self.update_targets(self.target_critic_1.variables, self.critic_1.variables)
-        self.update_targets(self.target_critic_2.variables, self.critic_2.variables)
+            actor_grads = tape.gradient(actor_loss, self.actor.trainable_variables)
+            self.actor.optimizer.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
+
+            # Update target networks
+            self.update_targets(self.target_actor.variables, self.actor.variables)
+            self.update_targets(self.target_critic_1.variables, self.critic_1.variables)
+            self.update_targets(self.target_critic_2.variables, self.critic_2.variables)
 
     def update_targets(self, target_weights, weights, tau=0.005):
         for (a, b) in zip(target_weights, weights):
@@ -143,12 +152,6 @@ class TD3Agent:
 # ==========================================
 
 def run_project_zero():
-    # --- PHASE 1: TRAINING (Forced 50 Episodes) ---
-    print("\n" + "="*40)
-    print(" TRAINING STARTED (FORCED 50 EPISODES)")
-    print("This will guarantee a diverse trained brain.")
-    print("="*40)
-    
     env = gym.make('PandaReach-v3', render_mode="rgb_array", reward_type="dense")
     
     obs_dim = env.observation_space['observation'].shape[0]
@@ -158,75 +161,68 @@ def run_project_zero():
 
     agent = TD3Agent(input_dims, n_actions, env)
     
-    # FORCED TRAINING COUNT (50 episodes minimum practice)
-    MIN_TRAINING_EPISODES = 50 
+    TOTAL_STEPS = 0
+    WARMUP_STEPS = 10000 
+    MAX_EPISODES = 600  
     
-    for i in range(200): # Max 200 episodes
+    print(f"Starting Warmup: Collecting {WARMUP_STEPS} random steps...")
+
+    for i in range(MAX_EPISODES):
         obs, _ = env.reset()
-        done = False
         score = 0
         
-        for _ in range(50):
+        # 100 steps gives the arm ample time to correct its trajectory
+        for _ in range(100):
             state = np.concatenate([obs['observation'], obs['achieved_goal'], obs['desired_goal']])
-            action = agent.choose_action(state)
+            
+            if TOTAL_STEPS < WARMUP_STEPS:
+                action = env.action_space.sample()
+            else:
+                action = agent.choose_action(state)
+                
             obs, reward, done, truncated, _ = env.step(action)
-            
             next_state = np.concatenate([obs['observation'], obs['achieved_goal'], obs['desired_goal']])
-            done = done or truncated
             
-            agent.memory.store_transition(state, action, reward, next_state, done)
-            agent.learn()
+            agent.memory.store_transition(state, action, reward, next_state, done or truncated)
+            
+            if TOTAL_STEPS >= WARMUP_STEPS:
+                agent.learn()
             
             score += reward
-            if done: break
+            TOTAL_STEPS += 1
+            if done or truncated: break
             
-        print(f"Training Ep {i+1} | Score: {score:.1f}")
-        
-        # ONLY START DEMO AFTER MINIMUM PRACTICE IS COMPLETE
-        # AND the score is decent (Score > -5.0)
-        if i >= MIN_TRAINING_EPISODES - 1 and score > -5.0: 
-            print(f"\n BRAIN TRAINED! (Score {score:.2f})")
-            print("Swapping to DEMO MODE now...")
+        if (i + 1) % 10 == 0:
+            status = "WARMUP" if TOTAL_STEPS < WARMUP_STEPS else "TRAINING"
+            print(f"Episode {i+1} | {status} | Score: {score:.2f} | Total Steps: {TOTAL_STEPS}")
+
+        # REFINED EXIT CONDITION:
+        # Requires warmup finished AND at least 350 post-warmup episodes (approx i > 500 total)
+        if TOTAL_STEPS > WARMUP_STEPS and i > 500 and score > -0.05:
+            print(f"\nGoal Reached and Brain Trained! Final Score: {score:.2f}")
             break
-        elif i >= 199:
-             print("\nTraining complete (Max episodes reached). Starting Demo.")
 
     env.close()
 
-    # --- PHASE 2: LIVE DEMO (GUI) ---
-    print("\n" + "="*40)
-    print(" LIVE DEMO STARTING")
-    print("="*40)
-    
+    # --- LIVE DEMO ---
+    print("\nStarting Demo (Press Ctrl+C to stop)...")
     env_demo = gym.make('PandaReach-v3', render_mode="human", reward_type="dense")
     
     try:
         while True:
             obs, _ = env_demo.reset()
-            done = False
-            
-            print("\nTarget Appeared. Moving...")
-            
-            for step in range(80):
+            for _ in range(100):
                 state = np.concatenate([obs['observation'], obs['achieved_goal'], obs['desired_goal']])
-                
                 action = agent.choose_action(state, evaluate=True)
                 obs, _, done, truncated, _ = env_demo.step(action)
-                
                 if done or truncated: break
-                
-                time.sleep(0.01) # Small sleep for natural visual speed
-                
-            # Check Success
+                time.sleep(0.01)
+            
             dist = np.linalg.norm(obs['achieved_goal'] - obs['desired_goal']) * 100
-            if dist < 5.0:
-                print(f" HIT! Distance: {dist:.1f} cm")
-            else:
-                print(f" Miss. Distance: {dist:.1f} cm")
-                
-            time.sleep(1.0) # Pause between targets
+            print(f"Result: {'HIT' if dist < 5.0 else 'Miss'} ({dist:.1f} cm)")
+            time.sleep(1.0)
     except KeyboardInterrupt:
-        print("\nDemo stopped by user.")
+        print("\nDemo stopped.")
         env_demo.close()
 
 if __name__ == '__main__':
