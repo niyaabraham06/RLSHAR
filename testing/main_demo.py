@@ -5,16 +5,14 @@ from agents.td3 import TD3Agent
 import time
 
 def main_demo():
-    # 1. SETUP: Use 'dense' rewards. This is CRITICAL.
-    # If you use 'sparse', the robot will fail.
+    # 1. SETUP
     env = gym.make('PandaReach-v3', render_mode="human", reward_type="dense")
 
-    # 2. DIMENSIONS
     obs_dim = env.observation_space['observation'].shape[0]
     goal_dim = env.observation_space['desired_goal'].shape[0]
     combined_input_dims = (obs_dim + 2 * goal_dim,)
 
-    # 3. LOAD AGENT
+    # 2. LOAD AGENT
     agent = TD3Agent(
         alpha=0.001, beta=0.001, tau=0.005,
         env=env, input_dims=combined_input_dims,
@@ -23,55 +21,43 @@ def main_demo():
         batch_size=256
     )
     
-    # Load the trained weights
-    print("Loading the winning model...")
+    print("Loading model...")
     agent.load_models()
 
-    print("\n--- RUNNING FINAL DEMO ---")
-    print("Robot should reach the green ball.")
-
+    print("\n--- LIVE DEMO ---")
+    
     episode = 1
     while True:
         observation, info = env.reset()
         done = False
-        score = 0
         
-        print(f"Episode {episode} started...")
-        
-        while not done:
+        # Max 50 steps to hit the target
+        for step in range(50):
             state = np.concatenate([
                 observation['observation'], 
                 observation['achieved_goal'], 
                 observation['desired_goal']
             ])
             
-            # evaluate=True is MANDATORY. 
-            # It turns off training noise so the robot acts precisely.
+            # evaluate=True is CRITICAL
             action = agent.choose_action(state, evaluate=True)
             
-            # Execute action
+            # FAST EXECUTION (No sleep)
             observation, reward, done, truncated, info = env.step(action)
             
-            # VISUAL SMOOTHING TRICK
-            # We pause for 0.04 seconds. This makes the movement look fluid
-            # to your eyes, but doesn't mess up the robot's math.
-            time.sleep(0.04) 
-            
-            score += reward
-            done = done or truncated
+            if done or truncated:
+                break
 
         # Check result
-        # In Dense mode, getting closer than 5cm is a win.
-        dist = np.linalg.norm(observation['achieved_goal'] - observation['desired_goal'])
-        dist_cm = dist * 100
+        dist_cm = np.linalg.norm(observation['achieved_goal'] - observation['desired_goal']) * 100
         
         if dist_cm < 5.0:
-            print(f"✅ HIT! Distance: {dist_cm:.1f} cm")
-            time.sleep(1.0) # Pause to celebrate
+            print(f"Episode {episode} | ✅ HIT! ({dist_cm:.1f} cm)")
         else:
-            print(f"❌ Miss. Distance: {dist_cm:.1f} cm")
-            time.sleep(0.5)
-            
+            print(f"Episode {episode} | ❌ Miss ({dist_cm:.1f} cm)")
+        
+        # Small pause only BETWEEN episodes
+        time.sleep(0.5) 
         episode += 1
 
     env.close()
